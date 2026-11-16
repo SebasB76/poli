@@ -1,9 +1,9 @@
 """Settings, the token file and the clock.
 
-Everything lives in the user's folders, so `uvx espol-aula` works from anywhere:
-  ESPOL_AULA_HOME  config folder: config.toml (optional) and token.env (default ~/.config/espol-aula)
+Everything lives in the user's folders, so `uvx espol` works from anywhere:
+  ESPOL_AULA_HOME  config folder: config.toml (optional) and token.env (default ~/.config/espol)
   ESPOL_AULA_DATA  data folder: the SQLite copy and downloaded material, over [storage] data_dir
-                   (default ~/.local/share/espol-aula)
+                   (default ~/.local/share/espol)
   ESPOL_AULA_NOW   ISO-8601 timestamp with offset that replaces the current time (tests)
 """
 
@@ -49,7 +49,7 @@ class CoreConfig:
 
 
 def home() -> Path:
-    return Path(os.environ.get("ESPOL_AULA_HOME") or _xdg("XDG_CONFIG_HOME", ".config") / "espol-aula")
+    return Path(os.environ.get("ESPOL_AULA_HOME") or _xdg("XDG_CONFIG_HOME", ".config") / "espol")
 
 
 def config_path() -> Path:
@@ -97,7 +97,7 @@ def load_config(path: Path | None = None) -> CoreConfig:
         max_mb_per_sync=max(0.0, float(material.get("max_mb_per_sync", 50))),
         request_interval=max(0.0, float(canvas.get("request_interval_seconds", 0.5))),
         data_dir=Path(os.path.expanduser(os.environ.get("ESPOL_AULA_DATA") or storage.get("data_dir")
-                                         or _xdg("XDG_DATA_HOME", ".local/share") / "espol-aula")),
+                                         or _xdg("XDG_DATA_HOME", ".local/share") / "espol")),
         config_path=path,
         raw=raw,
     )
@@ -122,7 +122,7 @@ def load_secret_values(path: Path | None = None) -> dict[str, str]:
     try:
         return parse_env_file(path)
     except FileNotFoundError as exc:
-        raise ConfigError("Todavía no tienes un token guardado: corre `espol-aula login`.") from exc
+        raise ConfigError("Todavía no tienes un token guardado: corre `espol login`.") from exc
 
 
 def update_secret_values(values: dict[str, str], *, remove: tuple[str, ...] = (),
@@ -177,7 +177,7 @@ def update_secret_values(values: dict[str, str], *, remove: tuple[str, ...] = ()
 def canvas_token(path: Path | None = None) -> str:
     token = load_secret_values(path).get("CANVAS_TOKEN", "")
     if not token:
-        raise ConfigError("Todavía no tienes un token guardado: corre `espol-aula login`.")
+        raise ConfigError("Todavía no tienes un token guardado: corre `espol login`.")
     return token
 
 

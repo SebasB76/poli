@@ -1,6 +1,6 @@
 """Keep ESPOL's one-hour Canvas personal tokens alive without touching course data.
 
-`maintain` must run more often than every hour (`espol-aula renovar --instalar` schedules it every 10 minutes);
+`maintain` must run more often than every hour (`espol renovar --instalar` schedules it every 10 minutes);
 every CLI command and MCP call also runs it, which costs no request while the token is younger than 40 minutes.
 
 The legacy User-Generated developer key on ESPOL's Canvas silently expires each token
@@ -33,7 +33,7 @@ PROBE_CREATED = "canvas_renewal_probe_created_at"
 PROBE_ID = "canvas_renewal_probe_id"
 DISABLED = "canvas_renewal_disabled"
 PROBE_TOKEN_KEY = "CANVAS_TOKEN_PROBE"
-PURPOSE = "espol-aula (renovación automática)"
+PURPOSE = "espol (renovación automática)"
 
 RENEW_AFTER = timedelta(minutes=40)
 PROBE_AFTER = timedelta(minutes=70)
@@ -59,7 +59,7 @@ class TokenRefusedError(RenewalError):
 class RenewalResult:
     renewed: bool = False
     server_fixed: bool = False
-    chain_cut: bool = False  # Canvas refused the current token; only a reseed (`espol-aula login`) revives it
+    chain_cut: bool = False  # Canvas refused the current token; only a reseed (`espol login`) revives it
     renewal_error: str = ""  # reseed only: the token was verified and saved, but renewing it failed this time
 
 
@@ -104,7 +104,7 @@ class TokenRenewal:
         values = load_secret_values()
         current = values.get("CANVAS_TOKEN", "")
         if not current:
-            raise RenewalError("Todavía no tienes un token guardado: corre `espol-aula login`.")
+            raise RenewalError("Todavía no tienes un token guardado: corre `espol login`.")
 
         if get_meta(self.conn, DISABLED) == "server-fixed":
             return RenewalResult(server_fixed=True)
@@ -219,7 +219,7 @@ class TokenRenewal:
 
     def revoke(self) -> int:
         """Delete every token of this chain from the aula, the current one last (it deletes the others):
-        `espol-aula logout`. Best-effort; returns how many went."""
+        `espol logout`. Best-effort; returns how many went."""
         current = load_secret_values().get("CANVAS_TOKEN", "")
         if not current:
             return 0
@@ -285,7 +285,7 @@ class TokenRenewal:
             raise RenewalError("La renovación intentó salir del dominio del aula")
         try:
             return requests.request(method, url, headers={"Authorization": f"Bearer {token}",
-                                                           "User-Agent": "espol-aula/0.1"},
+                                                           "User-Agent": "espol/0.1"},
                                     timeout=TIMEOUT, allow_redirects=False, **kwargs)
         except requests.RequestException as exc:
             raise RenewalError(f"No pude conectar con Canvas para renovar ({type(exc).__name__})") from None

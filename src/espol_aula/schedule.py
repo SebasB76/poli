@@ -1,7 +1,7 @@
-"""Run `espol-aula renovar` every 10 minutes: a systemd user timer on Linux, a LaunchAgent on macOS.
+"""Run `espol renovar` every 10 minutes: a systemd user timer on Linux, a LaunchAgent on macOS.
 
 ESPOL's tokens die an hour after they were made, so a computer asleep or off for an hour cuts the chain:
-the next `espol-aula login` starts a new one.
+the next `espol login` starts a new one.
 """
 
 from __future__ import annotations
@@ -13,17 +13,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-NAME = "espol-aula-renovar"
-LABEL = "ec.espol-aula.renovar"
+NAME = "espol-renovar"
+LABEL = "ec.espol.renovar"
 EVERY_SECONDS = 600
 
 
 def _command() -> list[str]:
     # uvx runs from a cache folder that `uv cache clean` deletes: the timer needs an installed command
-    exe = shutil.which("espol-aula")
+    exe = shutil.which("espol")
     if exe is None or "/.cache/uv/" in exe or "/uv/archive" in exe:
-        raise RuntimeError("Para renovar solo, instala el comando con `uv tool install espol-aula` "
-                           "(o `pipx install espol-aula`) y vuelve a correr `espol-aula renovar --instalar`.")
+        raise RuntimeError("Para renovar solo, instala el comando con `uv tool install espol` "
+                           "(o `pipx install espol`) y vuelve a correr `espol renovar --instalar`.")
     return [exe, "renovar"]
 
 
@@ -57,10 +57,10 @@ def install() -> str:
             folder = _systemd_dir()
             folder.mkdir(parents=True, exist_ok=True)
             (folder / f"{NAME}.service").write_text(
-                f"[Unit]\nDescription=Renueva el token de Canvas de espol-aula\n\n"
+                f"[Unit]\nDescription=Renueva el token de Canvas de espol\n\n"
                 f"[Service]\nType=oneshot\nExecStart={' '.join(command)}\n", encoding="utf-8")
             (folder / f"{NAME}.timer").write_text(
-                f"[Unit]\nDescription=Renueva el token de Canvas de espol-aula cada 10 minutos\n\n"
+                f"[Unit]\nDescription=Renueva el token de Canvas de espol cada 10 minutos\n\n"
                 f"[Timer]\nOnBootSec=1min\nOnUnitActiveSec={EVERY_SECONDS}s\n\n"
                 f"[Install]\nWantedBy=timers.target\n", encoding="utf-8")
             _run("systemctl", "--user", "daemon-reload")
@@ -69,7 +69,7 @@ def install() -> str:
     except (OSError, subprocess.CalledProcessError) as exc:
         detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else exc
         return f"⚠ No pude instalar la renovación automática: {detail}"
-    return ("⚠ No sé programar tareas en este sistema. Programa `espol-aula renovar` cada 10 minutos "
+    return ("⚠ No sé programar tareas en este sistema. Programa `espol renovar` cada 10 minutos "
             "con el programador de tareas que tengas.")
 
 

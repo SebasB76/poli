@@ -109,14 +109,14 @@ def build(aula: Aula) -> Server:
     ]
     for tool in tools:
         tool.read_only = tool.name not in ("download_files", "sync")
-    return Server("espol-aula", __version__, tools, INSTRUCTIONS, before_call=lambda: keep_alive(aula))
+    return Server("espol", __version__, tools, INSTRUCTIONS, before_call=lambda: keep_alive(aula))
 
 
 def keep_alive(aula: Aula) -> None:
     try:
         renewal.maintain(aula.cfg, now_utc(), wait=False)
     except (renewal.RenewalError, ConfigError) as exc:
-        print(f"espol-aula: no pude renovar el token ({exc})", file=sys.stderr)
+        print(f"espol: no pude renovar el token ({exc})", file=sys.stderr)
 
 
 def serve() -> int:

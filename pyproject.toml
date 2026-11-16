@@ -1,5 +1,5 @@
 [project]
-name = "espol-aula"
+name = "espol"
 version = "0.1.0"
 description = "Tu aula virtual de ESPOL (Canvas) como CLI y servidor MCP, para conectarla a cualquier agente"
 readme = "README.md"
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-espol-aula = "espol_aula.cli:main"
+espol = "espol_aula.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]

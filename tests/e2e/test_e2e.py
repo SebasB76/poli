@@ -1,4 +1,4 @@
-"""The student's path through the installed `espol-aula` command, against a local Canvas (fake_canvas.py):
+"""The student's path through the installed `espol` command, against a local Canvas (fake_canvas.py):
 
 1. `login` takes a hand-made token, verifies it and starts the renewal chain.
 2. `tareas`, `notas`, `archivos bajar` and `buscar` answer in JSON with English keys.
@@ -21,7 +21,7 @@ from pathlib import Path
 
 from fake_canvas import FakeCanvas
 
-CLI = str(Path(sys.executable).parent / "espol-aula")
+CLI = str(Path(sys.executable).parent / "espol")
 T0 = datetime.fromisoformat("2026-09-28T06:30:00-05:00")
 MANUAL = "7~manual-e2e-token-xxxxxxxxxxxxxxxx"
 
@@ -99,7 +99,7 @@ def test_student_path(tmp_path):
                      "params": {"name": "search_material", "arguments": {"query": "derivadas"}}}]
         out, err = mcp.communicate("\n".join(json.dumps(r) for r in requests) + "\n", timeout=120)
         replies = {r["id"]: r for r in map(json.loads, out.splitlines())}
-        assert replies[1]["result"]["serverInfo"]["name"] == "espol-aula"
+        assert replies[1]["result"]["serverInfo"]["name"] == "espol"
         names = {t["name"] for t in replies[2]["result"]["tools"]}
         assert {"pending_assignments", "grades", "download_files", "search_material", "read_file"} <= names
         call = replies[3]["result"]
@@ -111,7 +111,7 @@ def test_student_path(tmp_path):
         assert s.json("renovar", minutes=200, ok=False)["chain_cut"]
         assert s.json("estado", minutes=200)["chain_cut"]
         stale = s.run("tareas", minutes=200)
-        assert "espol-aula login" in stale.stderr, "the saved copy answers, and the student learns what to do"
+        assert "espol login" in stale.stderr, "the saved copy answers, and the student learns what to do"
 
         canvas.mint("7~second-manual-xxxxxxxxxxxxxxxx")
         s.run("login", "--stdin", "--sin-programar", minutes=210, stdin="7~second-manual-xxxxxxxxxxxxxxxx\n")

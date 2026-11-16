@@ -61,7 +61,7 @@ def course_ids(conn: sqlite3.Connection, fragment: str | None) -> list[int] | No
     rows = conn.execute("SELECT id, name, course_code FROM courses WHERE active = 1").fetchall()
     ids = [r["id"] for r in rows if needle in fold(r["name"]) or needle in fold(r["course_code"])]
     if not ids:
-        raise NotFound(f"Ninguna materia coincide con «{fragment}». Prueba `espol-aula cursos` para ver los nombres.")
+        raise NotFound(f"Ninguna materia coincide con «{fragment}». Prueba `espol cursos` para ver los nombres.")
     return ids
 
 
@@ -442,7 +442,7 @@ def file_by_id(conn: sqlite3.Connection, file_id: int) -> dict:
         (file_id,),
     ).fetchone()
     if row is None:
-        raise NotFound(f"No conozco el archivo {file_id}. Prueba `espol-aula archivos`.")
+        raise NotFound(f"No conozco el archivo {file_id}. Prueba `espol archivos`.")
     return {**_file(row, assigned_files(conn)), "ocr": ocr_state(conn, row["digest"])}
 
 

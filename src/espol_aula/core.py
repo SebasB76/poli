@@ -77,7 +77,7 @@ class Aula:
         if not self.explicit:
             if self.refused_token():
                 raise InvalidTokenError("El token de Canvas no es válido o expiró (401); no lo vuelvo a usar hasta "
-                                        "que corras `espol-aula login` con uno nuevo.", 401)
+                                        "que corras `espol login` con uno nuevo.", 401)
             paused = timefmt.parse(_store.get_meta(self.conn, PAUSED_KEY))
             if paused and self.now() < paused:
                 raise ThrottledError(f"el aula virtual pidió bajar el ritmo; la vuelvo a leer desde las "

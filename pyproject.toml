@@ -1,0 +1,36 @@
+[project]
+name = "espol-aula"
+version = "0.1.0"
+description = "Tu aula virtual de ESPOL (Canvas) como CLI y servidor MCP, para conectarla a cualquier agente"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "pypdf>=4.0",
+    "python-pptx>=0.6.23",
+    "python-docx>=1.1",
+    "pypdfium2>=4.30",
+    "Pillow>=10",
+    "openpyxl>=3.1",
+]
+
+[project.scripts]
+espol-aula = "espol_aula.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/espol_aula"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests/e2e"]
+
+[tool.ruff.lint]
+select = ["F", "E9"]

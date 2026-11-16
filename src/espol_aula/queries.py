@@ -1,0 +1,527 @@
+"""Read-side queries over the local store. Every function returns plain dicts,
+so the CLI, the bot, or a future web page can render them however they like."""
+
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from espol_aula import extract, ocr, timefmt
+from espol_aula.catalog import (KIND_LABEL, PUBLIC, WHY_LINK_ONLY, assigned_files, fold, html_to_text, is_old,
+                                term_year)
+
+# A grade on something Canvas takes no upload for is the only sign from the aula that it is done.
+DONE_SQL = ("(a.excused = 1 OR a.submitted_at IS NOT NULL"
+            " OR COALESCE(a.sub_state, '') IN ('submitted', 'graded', 'pending_review')"
+            " OR (COALESCE(a.submission_types, '') IN ('none', 'on_paper', 'external_tool') AND a.score IS NOT NULL)"
+            " OR a.id IN (SELECT assignment_id FROM marked_submitted))")
+OFFLINE_TYPES = {"none", "on_paper"}
+QUIZ_FIELDS = ("question_count", "time_limit", "allowed_attempts", "unlock_at", "lock_at", "hide_results")
+QUIZ_SQL = (", ".join(f"q.{f} AS quiz_{f}" for f in QUIZ_FIELDS) + ", q.quiz_id"
+            ", (SELECT kind FROM assignment_delivery d WHERE d.assignment_id = a.id) AS delivery_said")
+QUIZ_JOIN = "LEFT JOIN quizzes q ON q.assignment_id = a.id"
+
+# How an assignment is handed in. For «none» and «on_paper» Canvas only says that nothing is uploaded there, which
+# fits an exam in class as well as a lab finished on another platform: the instructions tell them apart, and the
+# student's word (assignment_delivery) wins over both. Only a past event leaves the pending list on its own.
+CANVAS_SUBMISSION, EXTERNAL_SUBMISSION, SCHEDULED_EVENT, UNKNOWN = (
+    "canvas_submission", "external_submission", "scheduled_event", "unknown")
+DELIVERIES = (CANVAS_SUBMISSION, EXTERNAL_SUBMISSION, SCHEDULED_EVENT, UNKNOWN)
+DELIVERY_LABEL = {CANVAS_SUBMISSION: "se entrega en el aula", EXTERNAL_SUBMISSION: "se entrega fuera del aula",
+                  SCHEDULED_EVENT: "es presencial: no hay nada que subir",
+                  UNKNOWN: "el aula no dice cómo se entrega"}
+# Over the folded instructions. Canvas itself appends «(Enlaces a un sitio externo.)» to a link that leaves the aula.
+ELSEWHERE_RE = re.compile(r"\b(plataforma|laboratorio|labs?|submit|suban|subir|sube|subirlo|envien|enviar|repositorio|"
+                          r"github|formulario|evidencia|captura|perusall|sitio externo)\b")
+IN_PERSON_RE = re.compile(r"\b(examen(es)?|leccion(es)?|presencial|exposicion(es)?|sustentacion|defensa|prueba escrita|"
+                          r"evaluacion escrita|asistencias?|participacion)\b")
+
+
+class NotFound(Exception):
+    pass
+
+
+def courses(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute("SELECT * FROM courses WHERE active = 1 ORDER BY name").fetchall()
+    return [
+        {"id": r["id"], "name": r["name"], "code": r["course_code"], "term": r["term"],
+         "current_score": r["current_score"], "current_grade": r["current_grade"], "url": r["html_url"]}
+        for r in rows
+    ]
+
+
+def course_ids(conn: sqlite3.Connection, fragment: str | None) -> list[int] | None:
+    """Course ids whose name or code contains `fragment` (accent/case-insensitive)."""
+    if not fragment:
+        return None
+    needle = fold(fragment)
+    rows = conn.execute("SELECT id, name, course_code FROM courses WHERE active = 1").fetchall()
+    ids = [r["id"] for r in rows if needle in fold(r["name"]) or needle in fold(r["course_code"])]
+    if not ids:
+        raise NotFound(f"Ninguna materia coincide con «{fragment}». Prueba `espol-aula cursos` para ver los nombres.")
+    return ids
+
+
+def _course_filter(ids: list[int] | None, column: str) -> tuple[str, list]:
+    if ids is None:
+        return "", []
+    return f" AND {column} IN ({','.join('?' * len(ids))})", list(ids)
+
+
+def delivery(r: sqlite3.Row) -> tuple[str, str]:
+    """(kind, what it rests on: «student», «canvas», «instructions», «title» or «no_instructions»)."""
+    if r["delivery_said"] in DELIVERIES:
+        return r["delivery_said"], "student"
+    types = set((r["submission_types"] or "").split(",")) - {""}
+    if "external_tool" in types:
+        return EXTERNAL_SUBMISSION, "canvas"
+    if not types or not types <= OFFLINE_TYPES:
+        return CANVAS_SUBMISSION, "canvas"
+    material = json.loads(r["material"] or "{}")
+    if not r["description"] and not material.get("files") and not material.get("links"):
+        # a grade column (the exam, participation), unless its name points elsewhere («PERUSALL: …»)
+        return (EXTERNAL_SUBMISSION, "title") if ELSEWHERE_RE.search(fold(r["name"])) else (SCHEDULED_EVENT,
+                                                                                            "no_instructions")
+    text = fold(r["description"])
+    elsewhere, in_person = bool(ELSEWHERE_RE.search(text)), bool(IN_PERSON_RE.search(text))
+    if elsewhere != in_person:
+        return (EXTERNAL_SUBMISSION if elsewhere else SCHEDULED_EVENT), "instructions"
+    return UNKNOWN, "instructions"
+
+
+def _assignment(r: sqlite3.Row, now: datetime) -> dict:
+    types = set((r["submission_types"] or "").split(",")) - {""}
+    done = bool(r["done"])
+    due = timefmt.parse(r["due_at"])
+    kind, basis = delivery(r)
+    return {
+        "id": r["id"], "course": r["course_name"], "course_id": r["course_id"], "assignment": r["name"],
+        "due": r["due_at"], "submitted": done,
+        # An event that passed was held, not missed; work done elsewhere is late until marked or graded.
+        "late": bool(due and due < now and not done and kind != SCHEDULED_EVENT),
+        "offline_only": bool(types) and types <= OFFLINE_TYPES,
+        "delivery": kind, "delivery_basis": basis,
+        "points": r["points_possible"], "score": r["score"], "grade": r["grade"], "url": r["html_url"],
+        "quiz": quiz_info(r, "quiz_"),
+    }
+
+
+def quiz_info(r, prefix: str = "") -> dict | None:
+    """A quiz's settings as alerts and tools show them; None when the assignment is not a quiz read so far."""
+    if r is None or r["quiz_id"] is None:
+        return None
+    return {f: r[prefix + f] for f in QUIZ_FIELDS}
+
+
+def assignments_between(conn: sqlite3.Connection, now: datetime, start: datetime, end: datetime,
+                        ids: list[int] | None = None) -> list[dict]:
+    extra, params = _course_filter(ids, "a.course_id")
+    rows = conn.execute(
+        f"""SELECT a.*, c.name AS course_name, {DONE_SQL} AS done, {QUIZ_SQL} FROM assignments a
+            JOIN courses c ON c.id = a.course_id {QUIZ_JOIN}
+            WHERE a.active = 1 AND c.active = 1 AND a.due_at >= ? AND a.due_at < ?{extra}
+            ORDER BY a.due_at, c.name""",
+        [timefmt.iso(start), timefmt.iso(end), *params],
+    ).fetchall()
+    return [_assignment(r, now) for r in rows]
+
+
+def pending(conn: sqlite3.Connection, now: datetime, ids: list[int] | None = None, *,
+            days: int | None = None, overdue_days: int = 7) -> list[dict]:
+    """Not-yet-submitted assignments ordered by due date: recently overdue first, then
+    upcoming, then the ones with no due date."""
+    extra, params = _course_filter(ids, "a.course_id")
+    since = timefmt.iso(now - timedelta(days=overdue_days))
+    until = timefmt.iso(now + timedelta(days=days)) if days is not None else None
+    rows = conn.execute(
+        f"""SELECT a.*, c.name AS course_name, {DONE_SQL} AS done, {QUIZ_SQL} FROM assignments a
+            JOIN courses c ON c.id = a.course_id {QUIZ_JOIN}
+            WHERE a.active = 1 AND c.active = 1 AND NOT {DONE_SQL}
+              AND (a.due_at IS NULL OR a.due_at >= ?){' AND a.due_at < ?' if until else ''}{extra}
+            ORDER BY a.due_at IS NULL, a.due_at, c.name""",
+        [since, *([until] if until else []), *params],
+    ).fetchall()
+    tasks = [_assignment(r, now) for r in rows]
+    # A paper exam from yesterday is not "pending"; a lab handed in on another platform still is.
+    return [t for t in tasks if not (t["delivery"] == SCHEDULED_EVENT and t["due"] and timefmt.parse(t["due"]) < now)]
+
+
+FIND_STOPWORDS = set("""de del la las el los en con para por que una uno un y o mi tu su sus al lo esa ese esta este
+tarea tareas deber deberes entrega trabajo actividad sobre the of and""".split())
+
+
+def find_assignments(conn: sqlite3.Connection, now: datetime, words: str, ids: list[int] | None = None,
+                     limit: int = 8) -> list[dict]:
+    """Every assignment of the semester whose title or instructions carry the student's words («taller 2», «el de
+    vectores»), handed in or past included, best match first. A number must match as a whole word."""
+    wanted = [w for w in re.findall(r"\w+", fold(words)) if w not in FIND_STOPWORDS and (len(w) > 2 or w.isdigit())]
+    if not wanted:
+        return []
+    extra, params = _course_filter(ids, "a.course_id")
+    rows = conn.execute(
+        f"""SELECT a.*, c.name AS course_name, {DONE_SQL} AS done, {QUIZ_SQL} FROM assignments a
+            JOIN courses c ON c.id = a.course_id {QUIZ_JOIN} WHERE a.active = 1 AND c.active = 1{extra}""",
+        params).fetchall()
+
+    def hits(text: str, word: str) -> bool:
+        pattern = rf"\b{word}\b" if word.isdigit() else rf"\b{re.escape(word[:max(4, len(word) - 2)])}"
+        return re.search(pattern, text) is not None
+
+    scored = []
+    for r in rows:
+        title, body = fold(r["name"]), fold(html_to_text(r["description"]))
+        in_title = [w for w in wanted if hits(title, w)]
+        in_body = [w for w in wanted if w not in in_title and hits(body, w)]
+        score = 3 * len(in_title) + len(in_body)
+        if score:
+            due = timefmt.parse(r["due_at"])
+            distance = abs((due - now).total_seconds()) if due else float("inf")
+            scored.append((-score, distance, r, "title" if in_title else "instructions"))
+    found = []
+    for _, _, r, where in sorted(scored, key=lambda item: item[:2])[:limit]:
+        material = json.loads(r["material"] or "{}")
+        found.append({**_assignment(r, now), "matched_in": where, "attachments": len(material.get("files") or [])
+                      + len(material.get("links") or [])})
+    return found
+
+
+def assignment(conn: sqlite3.Connection, now: datetime, assignment_id: int, ids: list[int] | None = None) -> dict:
+    """One assignment with what the professor wrote in it, and the files and outside links that text points to."""
+    extra, params = _course_filter(ids, "a.course_id")
+    row = conn.execute(
+        f"""SELECT a.*, c.name AS course_name, {DONE_SQL} AS done, {QUIZ_SQL} FROM assignments a
+            JOIN courses c ON c.id = a.course_id {QUIZ_JOIN} WHERE a.id = ?{extra}""",
+        [assignment_id, *params],
+    ).fetchone()
+    if row is None:
+        raise NotFound(f"No conozco la tarea {assignment_id}: usa el «id» que da tareas o semana.")
+    material = json.loads(row["material"] or "{}")
+    fids, urls = material.get("files") or [], material.get("links") or []
+    source = f"Tarea «{row['name']}»"  # how sync recorded it before assignments kept their own list
+    files = conn.execute(
+        f"""SELECT f.*, c.name AS course_name, c.term_start, c.term FROM files f JOIN courses c ON c.id = f.course_id
+            WHERE f.active = 1 AND (f.id IN ({','.join('?' * len(fids)) or 'NULL'}) OR f.source = ? AND f.course_id = ?)""",
+        [*fids, source, row["course_id"]]).fetchall()
+    links = conn.execute(
+        f"""SELECT l.*, c.name AS course_name FROM links l JOIN courses c ON c.id = l.course_id
+            WHERE l.active = 1 AND l.course_id = ? AND (l.url IN ({','.join('?' * len(urls)) or 'NULL'}) OR l.source = ?)""",
+        [row["course_id"], *urls, source]).fetchall()
+    order = {fid: n for n, fid in enumerate(fids)}  # as the professor listed them
+    return {**_assignment(row, now), "closes": row["lock_at"], "submission_types": row["submission_types"],
+            "instructions": row["description"] or None,
+            "rubric": json.loads(row["rubric"]) if row["rubric"] else None,
+            "files": [_file(f, set(fids)) for f in sorted(files, key=lambda f: order.get(f["id"], len(order)))],
+            "links": [_link(li) for li in links]}
+
+
+def quiz_openings(conn: sqlite3.Connection, now: datetime, lead: timedelta) -> list[dict]:
+    """Unanswered quizzes that open, or opened, within `lead` of now."""
+    rows = conn.execute(
+        f"""SELECT a.*, c.name AS course_name, {DONE_SQL} AS done, {QUIZ_SQL} FROM assignments a
+            JOIN courses c ON c.id = a.course_id {QUIZ_JOIN}
+            WHERE a.active = 1 AND c.active = 1 AND NOT {DONE_SQL} AND q.unlock_at > ? AND q.unlock_at <= ?
+            ORDER BY q.unlock_at""",
+        [timefmt.iso(now - lead), timefmt.iso(now + lead)],
+    ).fetchall()
+    return [_assignment(r, now) for r in rows]
+
+
+def announcements(conn: sqlite3.Connection, ids: list[int] | None = None, *, limit: int = 10) -> list[dict]:
+    """Newest first, each with the files and outside links it points to (its text alone loses them)."""
+    extra, params = _course_filter(ids, "n.course_id")
+    rows = conn.execute(
+        f"""SELECT n.*, c.name AS course_name FROM announcements n JOIN courses c ON c.id = n.course_id
+            WHERE c.active = 1{extra} ORDER BY n.posted_at DESC LIMIT ?""",
+        [*params, limit],
+    ).fetchall()
+    result = []
+    for r in rows:
+        material = json.loads(r["material"] or "{}")
+        files, urls = material.get("files") or [], material.get("links") or []
+        linked = conn.execute(
+            f"""SELECT l.*, c.name AS course_name FROM links l JOIN courses c ON c.id = l.course_id
+                WHERE l.course_id = ? AND l.url IN ({','.join('?' * len(urls)) or 'NULL'})""",
+            [r["course_id"], *urls]).fetchall()
+        attached = conn.execute(f"SELECT id, display_name FROM files WHERE active = 1 AND id IN "
+                                f"({','.join('?' * len(files)) or 'NULL'})", files).fetchall()
+        result.append({"id": r["id"], "course": r["course_name"], "course_id": r["course_id"], "title": r["title"],
+                       "author": r["author"], "posted": r["posted_at"], "text": r["message_text"],
+                       "url": r["html_url"], "files": [{"file_id": f["id"], "file": f["display_name"]}
+                                                          for f in attached],
+                       "links": sorted((_link(link) for link in linked), key=lambda link: urls.index(link["url"]))})
+    return result
+
+
+def _feedback(a: sqlite3.Row) -> dict:
+    """The professor's comments and graded rubric; `feedback_read: false` when the aula was not asked yet."""
+    if a["feedback"] is None:
+        return {"feedback_read": False}
+    found = json.loads(a["feedback"])
+    return {"feedback": found} if found else {}
+
+
+def grades(conn: sqlite3.Connection, ids: list[int] | None = None) -> list[dict]:
+    extra, params = _course_filter(ids, "c.id")
+    result = []
+    for c in conn.execute(f"SELECT * FROM courses c WHERE c.active = 1{extra} ORDER BY c.name", params).fetchall():
+        graded = conn.execute(
+            """SELECT * FROM assignments WHERE course_id = ? AND active = 1 AND (score IS NOT NULL OR grade IS NOT NULL)
+               ORDER BY COALESCE(graded_at, due_at) DESC""",
+            (c["id"],),
+        ).fetchall()
+        result.append({
+            "course": c["name"], "course_id": c["id"], "current_score": c["current_score"],
+            "current_grade": c["current_grade"],
+            "assignments": [{"id": a["id"], "assignment": a["name"], "score": a["score"], "grade": a["grade"],
+                        "points": a["points_possible"], "graded_at": a["graded_at"], "url": a["html_url"],
+                        **({"late_penalty": a["points_deducted"]} if a["points_deducted"] else {}),
+                        **({"course_stats": json.loads(a["stats"])} if a["stats"] else {}), **_feedback(a)}
+                       for a in graded],
+        })
+    return result
+
+
+INDEX_STATE = {"ok": "leído", "escaneado": "escaneado", "sin_texto": "sin texto", "no_soportado": "formato que no leo",
+               "error_lectura": "no se pudo leer"}
+
+
+def file_state(f: dict, max_mb: float) -> str:
+    """leído · escaneado (its pages are images) · sin bajar · muy grande para bajar · no se pudo bajar · …"""
+    if f["downloaded"] and f["index_status"] in INDEX_STATE:
+        return INDEX_STATE[f["index_status"]]
+    if f["index_status"] == "muy_grande" or (f["size"] or 0) > max_mb * 1024 * 1024:
+        return "muy grande para bajar"
+    return "no se pudo bajar" if f["index_status"] == "error_descarga" else "sin bajar"
+
+
+def _file(r: sqlite3.Row, assigned: set[int] = frozenset()) -> dict:
+    return {"id": r["id"], "course": r["course_name"], "course_id": r["course_id"], "file": r["display_name"],
+            "extension": Path(r["filename"] or r["display_name"] or "").suffix.lower().lstrip("."),
+            "module": r["module"], "section": r["section"], "folder": r["folder"], "source": r["source"],
+            "size": r["size"], "uploaded": r["created_at"], "updated": r["updated_at"],
+            "downloaded": r["local_path"] if r["local_path"] and Path(r["local_path"]).exists() else None,
+            "index_status": r["index_status"], "pages": r["pages"], "language": r["language"] or None,
+            "copy_of": r["duplicate_of"], "url": r["html_url"], "mime": r["content_type"],
+            "previous_term": r["id"] not in assigned and is_old(r["folder"], r["display_name"],
+                                                            term_year(r["term_start"], r["course_name"], r["term"]))}
+
+
+def files(conn: sqlite3.Connection, ids: list[int] | None = None, name: str | None = None) -> list[dict]:
+    """The catalog: every document the aula shows (downloaded or not) plus what was added by hand."""
+    extra, params = _course_filter(ids, "f.course_id")
+    rows = conn.execute(
+        f"""SELECT f.*, c.name AS course_name, c.term_start, c.term FROM files f JOIN courses c ON c.id = f.course_id
+            WHERE f.active = 1 AND c.active = 1{extra} ORDER BY c.name, f.module, f.display_name""",
+        params,
+    ).fetchall()
+    needle, assigned = (fold(name) if name else None), assigned_files(conn)
+    media = bool(needle and MEDIA_WORDS.search(needle))
+    found = [_file(r, assigned) for r in rows]
+    return [f for f, r in zip(found, rows) if not needle or (media and is_media(f)) or any(
+        needle in fold(r[k]) for k in ("display_name", "module", "section", "folder", "source"))]
+
+
+MEDIA_EXTENSIONS = {"mp4", "m4v", "mov", "webm", "mkv", "avi", "wmv", "mp3", "m4a", "wav", "ogg", "opus"}
+
+
+# A recording is rarely named one («CLASE 3 - ESTADISTICA.mp4»): a search for it matches every video.
+MEDIA_WORDS = re.compile(r"grab|video|record|audio|mp4")
+
+
+def is_media(f: dict) -> bool:
+    """A class recording or a video: nothing to read, but a student asks for its link."""
+    return (f.get("mime") or "").startswith(("video/", "audio/")) or f["extension"] in MEDIA_EXTENSIONS
+
+
+ITEM_KIND = {"SubHeader": "título", "File": "archivo", "Page": "página", "Assignment": "tarea", "Quiz": "quiz",
+             "Discussion": "foro", "ExternalUrl": "enlace", "ExternalTool": "herramienta externa"}
+
+
+def module_items(conn: sqlite3.Connection, ids: list[int] | None = None, name: str | None = None) -> list[dict]:
+    """The Modules of the courses as the student sees them, in order. With `name`, only the items whose title,
+    module or subheader has it (a subheader's own text too: «ID ZOOM: 829…»)."""
+    extra, params = _course_filter(ids, "m.course_id")
+    rows = conn.execute(
+        f"""SELECT m.*, c.name AS course_name, f.content_type, f.display_name, f.filename, a.due_at,
+                   (SELECT l.id FROM links l WHERE l.course_id = m.course_id AND l.url = m.external_url) AS link_id
+            FROM module_items m JOIN courses c ON c.id = m.course_id
+            LEFT JOIN files f ON m.kind = 'File' AND f.id = m.content_id
+            LEFT JOIN assignments a ON m.kind = 'Assignment' AND a.id = m.content_id
+            WHERE c.active = 1{extra} ORDER BY c.name, m.seq""",
+        params,
+    ).fetchall()
+    needle = fold(name) if name else None
+    out = []
+    for r in rows:
+        kind = ITEM_KIND.get(r["kind"], r["kind"].lower())
+        if r["kind"] == "File" and is_media({"mime": r["content_type"], "extension": Path(
+                r["filename"] or r["display_name"] or r["title"] or "").suffix.lower().lstrip(".")}):
+            kind = "video"
+        if needle and not (kind == "video" and MEDIA_WORDS.search(needle)) and not any(
+                needle in fold(r[k]) for k in ("title", "module", "section", "display_name")):
+            continue
+        item = {"course": r["course_name"], "course_id": r["course_id"], "module": r["module"], "section": r["section"],
+                "kind": kind, "title": r["title"],
+                "url": r["external_url"] if r["kind"] == "ExternalUrl" else r["html_url"]}
+        if r["kind"] == "File":
+            item["file_id"] = r["content_id"]
+        elif r["kind"] == "Assignment":
+            item["assignment_id"], item["due"] = r["content_id"], r["due_at"]
+        if r["link_id"] is not None:
+            item["link_id"] = r["link_id"]
+        out.append(item)
+    return out
+
+
+def _link(r: sqlite3.Row) -> dict:
+    why = r["problem"] if r["access"] == PUBLIC else WHY_LINK_ONLY.get(r["kind"], "no lo puedo abrir")
+    return {"link_id": r["id"], "course": r["course_name"], "course_id": r["course_id"], "title": r["title"],
+            "kind": KIND_LABEL.get(r["kind"], r["kind"]), "access": r["access"], "module": r["module"],
+            "section": r["section"], "source": r["source"], "file_id": r["file_id"], "reason": why,
+            "checked_at": r["checked_at"], "url": r["url"]}
+
+
+def links(conn: sqlite3.Connection, ids: list[int] | None = None, name: str | None = None) -> list[dict]:
+    """Outside links of the courses: what they are, whether a bot may open them (acceso «publico»: it tries
+    without a login) and what that gave: the file it opened (archivo_id), or why it does not open (motivo)."""
+    extra, params = _course_filter(ids, "l.course_id")
+    rows = conn.execute(
+        f"""SELECT l.*, c.name AS course_name FROM links l JOIN courses c ON c.id = l.course_id
+            WHERE l.active = 1 AND c.active = 1{extra} ORDER BY c.name, l.module, l.id""",
+        params,
+    ).fetchall()
+    needle = fold(name) if name else None
+    return [_link(r) for r in rows
+            if not needle or any(needle in fold(r[k]) for k in ("title", "module", "section", "source", "url"))]
+
+
+def bibliography(conn: sqlite3.Connection, ids: list[int]) -> dict | None:
+    """The books the newest syllabus of these courses names: {'main': [...], 'supplementary': [...], ...}."""
+    extra, params = _course_filter(ids, "b.course_id")
+    row = conn.execute(
+        f"""SELECT b.*, f.display_name, f.html_url FROM bibliography b JOIN files f ON f.id = b.file_id
+            WHERE f.active = 1 AND b.main != '[]'{extra} ORDER BY f.updated_at DESC, b.file_id DESC LIMIT 1""",
+        params,
+    ).fetchone()
+    if row is None:
+        return None
+    return {"main": json.loads(row["main"]), "supplementary": json.loads(row["others"]),
+            "syllabus": row["display_name"], "syllabus_id": row["file_id"], "url": row["html_url"]}
+
+
+def ocr_state(conn: sqlite3.Connection, digest: str | None) -> dict | None:
+    """The pages of a file that are only an image: how many OCR read, how many wait, which read poorly."""
+    rows = conn.execute("SELECT page, text, confidence FROM ocr_pages WHERE digest = ? ORDER BY page",
+                        (digest,)).fetchall() if digest else []
+    if not rows:
+        return None
+    return {"pages": len(rows), "read": sum(1 for r in rows if r["text"]),
+            "pending": sum(1 for r in rows if r["text"] is None),
+            "doubtful": [r["page"] for r in rows if r["text"] and ocr.doubtful(r["text"], r["confidence"])]}
+
+
+def ocr_waiting(conn: sqlite3.Connection) -> int:
+    """Scanned pages of downloaded files that OCR has not read yet."""
+    return conn.execute("SELECT COUNT(*) FROM ocr_pages o WHERE o.text IS NULL AND EXISTS (SELECT 1 FROM files f"
+                        " WHERE f.digest = o.digest AND f.local_path IS NOT NULL)").fetchone()[0]
+
+
+def ocr_pages(conn: sqlite3.Connection, file_id: int) -> set[int]:
+    """The pages of a file whose indexed text came from OCR."""
+    return {r["page"] for r in conn.execute("SELECT o.page FROM ocr_pages o JOIN files f ON f.digest = o.digest"
+                                            " WHERE f.id = ? AND o.text != ''", (file_id,))}
+
+
+def file_by_id(conn: sqlite3.Connection, file_id: int) -> dict:
+    row = conn.execute(
+        "SELECT f.*, c.name AS course_name, c.term_start, c.term FROM files f JOIN courses c ON c.id = f.course_id"
+        " WHERE f.id = ?",
+        (file_id,),
+    ).fetchone()
+    if row is None:
+        raise NotFound(f"No conozco el archivo {file_id}. Prueba `espol-aula archivos`.")
+    return {**_file(row, assigned_files(conn)), "ocr": ocr_state(conn, row["digest"])}
+
+
+def read_pages(conn: sqlite3.Connection, file_id: int, first: int | None = None, last: int | None = None) -> dict:
+    """Text of an indexed file, page by page (optionally a page range); a page read with OCR says so."""
+    info = file_by_id(conn, file_id)
+    rows = conn.execute(
+        "SELECT page, text FROM chunks WHERE file_id = ? ORDER BY CAST(page AS INTEGER), rowid", (file_id,)
+    ).fetchall()
+    pages: dict[int, list[str]] = {}
+    for r in rows:
+        number = int(r["page"])
+        if (first is None or number >= first) and (last is None or number <= last):
+            pages.setdefault(number, []).append(r["text"])
+    unit = extract.UNIT.get(Path(info["downloaded"] or info["file"]).suffix.lower().lstrip("."), "página")
+    read = ocr_pages(conn, file_id)
+    return {**info, "unit": unit,
+            "content": [{"page": n, "text": "".join(parts), **({"ocr": True} if n in read else {})}
+                          for n, parts in sorted(pages.items())]}
+
+
+def people(conn: sqlite3.Connection, ids: list[int] | None = None) -> list[dict]:
+    """Each course's professors and assistants (role «teacher» or «ta»; email null where the aula hides it) and the
+    student's groups in it."""
+    extra, params = _course_filter(ids, "c.id")
+    result = []
+    for c in conn.execute(f"SELECT * FROM courses c WHERE c.active = 1{extra} ORDER BY c.name", params).fetchall():
+        staff = conn.execute("SELECT * FROM course_staff WHERE course_id = ? ORDER BY role = 'ta', name",
+                             (c["id"],)).fetchall()
+        teams = conn.execute("SELECT * FROM student_groups WHERE course_id = ? AND active = 1 ORDER BY name",
+                             (c["id"],)).fetchall()
+        read = conn.execute("SELECT 1 FROM meta WHERE key = ?", (f"staff_read:{c['id']}",)).fetchone()
+        result.append({"course": c["name"], "course_id": c["id"], "staff_read": read is not None,
+                       "staff": [{"name": r["name"], "role": r["role"], "email": r["email"]} for r in staff],
+                       "groups": [{"name": g["name"], "members": json.loads(g["members"] or "[]")} for g in teams]})
+    return result
+
+
+def inbox(conn: sqlite3.Connection, ids: list[int] | None = None, limit: int = 10) -> list[dict]:
+    """The professors' and assistants' inbox messages, newest first."""
+    extra, params = _course_filter(ids, "m.course_id")
+    rows = conn.execute(
+        f"""SELECT m.*, c.name AS course_name FROM inbox_messages m JOIN courses c ON c.id = m.course_id
+            WHERE 1 = 1{extra} ORDER BY m.created_at DESC LIMIT ?""", (*params, limit)).fetchall()
+    return [{"course": r["course_name"], "subject": r["subject"], "author": r["author"], "at": r["created_at"],
+             "text": r["body"], "files": json.loads(r["attachments"] or "[]")} for r in rows]
+
+
+def calendar(conn: sqlite3.Connection, now: datetime, ids: list[int] | None = None, days: int = 30) -> dict:
+    """Upcoming calendar events (not assignments) and the peer reviews still to do."""
+    extra, params = _course_filter(ids, "e.course_id")
+    start, end = timefmt.iso(now), timefmt.iso(now + timedelta(days=days))
+    events = conn.execute(
+        f"""SELECT e.*, c.name AS course_name FROM calendar_events e JOIN courses c ON c.id = e.course_id
+            WHERE e.active = 1 AND COALESCE(e.end_at, e.start_at) >= ? AND e.start_at <= ?{extra}
+            ORDER BY e.start_at""", (start, end, *params)).fetchall()
+    extra, params = _course_filter(ids, "r.course_id")
+    reviews = conn.execute(
+        f"""SELECT r.*, c.name AS course_name FROM peer_reviews r JOIN courses c ON c.id = r.course_id
+            WHERE r.done = 0{extra} ORDER BY r.due_at IS NULL, r.due_at""", params).fetchall()
+    return {"events": [{"course": r["course_name"], "title": r["title"], "start": r["start_at"], "end": r["end_at"],
+                        "all_day": bool(r["all_day"]), "location": r["location"], "text": r["description"],
+                        "url": r["html_url"]} for r in events],
+            "peer_reviews": [{"course": r["course_name"], "title": r["title"], "due": r["due_at"], "url": r["html_url"]}
+                             for r in reviews]}
+
+
+def discussions(conn: sqlite3.Connection, ids: list[int] | None = None, limit: int = 20) -> list[dict]:
+    """The courses' forums, the ones with activity first. `participated` is null when the topic was never opened."""
+    extra, params = _course_filter(ids, "d.course_id")
+    rows = conn.execute(
+        f"""SELECT d.*, c.name AS course_name, a.due_at AS graded_due FROM discussions d
+            JOIN courses c ON c.id = d.course_id LEFT JOIN assignments a ON a.id = d.assignment_id
+            WHERE d.active = 1{extra}
+            ORDER BY COALESCE(d.last_reply_at, d.posted_at) DESC LIMIT ?""", (*params, limit)).fetchall()
+    return [{"id": r["id"], "course": r["course_name"], "title": r["title"], "author": r["author"],
+             "posted": r["posted_at"], "last_reply": r["last_reply_at"], "due": r["graded_due"] or r["due_at"],
+             "closes": r["lock_at"], "graded": r["assignment_id"] is not None,
+             "post_first_to_see_replies": bool(r["require_initial_post"]),
+             "participated": None if r["participated"] is None else bool(r["participated"]),
+             "replies_to_you": len(json.loads(r["replies"])) if r["replies"] else 0,
+             "text": (r["message_text"] or "")[:600], "url": r["html_url"]} for r in rows]

@@ -218,22 +218,17 @@ class TokenRenewal:
                                response.status_code)
 
     def revoke(self) -> int:
-        """Delete every token of this chain from the aula, the current one last (it deletes the others):
-        `poli logout`. Best-effort; returns how many went."""
-        current = load_secret_values().get("CANVAS_TOKEN", "")
-        if not current:
-            return 0
-        current_id = self._find_token_id(current)
+        """`poli logout`: each token this machine holds revokes itself, the probe first. ESPOL's Canvas answers 404 to
+        every token listing, so a token is reached through itself, not by id. Best-effort; returns how many went."""
+        values = load_secret_values()
         deleted = 0
-        ids = [self._integer(item.get("id")) for item in self._list_tokens(current) if item.get("purpose") == PURPOSE]
-        for token_id in [i for i in ids if i is not None and i != current_id] + [current_id]:
-            if token_id is None:
-                continue
+        for token in dict.fromkeys(v for v in (values.get(PROBE_TOKEN_KEY), values.get("CANVAS_TOKEN")) if v):
+            url = self.cfg.canvas_url.rstrip("/") + "/login/oauth2/token"
             try:
-                self._delete(current, token_id)
-                deleted += 1
+                response = self._request("DELETE", url, token)
             except RenewalError:
-                pass  # what is left dies with Canvas' hour
+                continue  # what is left dies with Canvas' hour
+            deleted += response.status_code in (200, 204)
         return deleted
 
     def _find_token_id(self, token: str) -> int | None:

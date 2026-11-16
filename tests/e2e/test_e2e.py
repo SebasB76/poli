@@ -116,8 +116,11 @@ def test_student_path(tmp_path):
         canvas.mint("7~second-manual-xxxxxxxxxxxxxxxx")
         s.run("login", "--stdin", "--sin-programar", minutes=210, stdin="7~second-manual-xxxxxxxxxxxxxxxx\n")
         assert not s.json("estado", minutes=210)["chain_cut"]
-        assert s.json("logout", minutes=211)["revoked"] >= 1
+        held = [line.split("=", 1)[1] for line in (s.home / "token.env").read_text(encoding="utf-8").splitlines()
+                if "=" in line]
+        assert s.json("logout", minutes=211)["revoked"] == len(held) >= 1
         assert not (s.home / "token.env").exists()
+        assert not set(held) & canvas.valid, "every token this machine held is gone from the aula"
 
-        others = [w for w in canvas.writes if not w[1].startswith("/api/v1/users/self/tokens")]
+        others = [w for w in canvas.writes if not w[1].startswith(("/api/v1/users/self/tokens", "/login/oauth2/token"))]
         assert not others, f"only the token endpoints may be written: {others}"

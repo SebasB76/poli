@@ -1,5 +1,6 @@
 """A local Canvas that serves the synthetic fixtures under fixtures/canvas/ the way the aula does: Bearer auth,
-personal-token creation, listing and deletion, `Link` pagination (2 items per page, so the client must follow it),
+personal-token creation and deletion (no listing: ESPOL's
+Canvas answers 404 to it), `Link` pagination (2 items per page, so the client must follow it),
 `X-Rate-Limit-Remaining`, one 429 to exercise the backoff, and file downloads. Any other write answers 405.
 """
 
@@ -126,6 +127,12 @@ class _Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         if not self._write():
             return
+        if urlsplit(self.path).path == "/login/oauth2/token":  # a token revoking itself
+            token = self.headers.get("Authorization", "").removeprefix("Bearer ")
+            with self.canvas.lock:
+                self.canvas.valid.discard(token)
+                self.canvas.deleted.add(self.canvas.token_ids[token])
+            return self._json(200, {})
         match = re.fullmatch(r"/api/v1/users/self/tokens/(\d+)", urlsplit(self.path).path)
         if not match:
             return self._json(405, {"errors": [{"message": "solo lectura"}]})
@@ -145,10 +152,6 @@ class _Handler(BaseHTTPRequestHandler):
         quota = {"X-Rate-Limit-Remaining": "599.12"}
         if url.path == "/api/v1/users/self":
             return self._json(200, {"id": 42, "name": "Estudiante E2E"}, quota)
-        if url.path == "/api/v1/users/self/user_generated_tokens":
-            with canvas.lock:
-                tokens = [canvas.token_json(t) for t, i in canvas.token_ids.items() if i not in canvas.deleted]
-            return self._json(200, tokens, quota)
         if url.path.startswith("/files/") and url.path.endswith("/download"):
             name = DOWNLOADS.get(int(url.path.split("/")[2]))
             if not name:

@@ -1,6 +1,6 @@
 """Tools for an ESPOL student's aula virtual (Canvas), for any agent: a CLI and an MCP server."""
 
-from espol_aula.core import (CATALOG_BUDGET, PAUSED_KEY, REFUSED_KEY, Aula, CanvasClient, CoreConfig, load_config,
+from poli.core import (CATALOG_BUDGET, PAUSED_KEY, REFUSED_KEY, Aula, CanvasClient, CoreConfig, load_config,
                              token_fingerprint)
 
 __version__ = "0.1.0"

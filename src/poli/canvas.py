@@ -29,7 +29,7 @@ import requests
 
 log = logging.getLogger(__name__)
 
-USER_AGENT = "espol/0.1 (solo lectura)"
+USER_AGENT = "poli/0.1 (solo lectura)"
 LOW_QUOTA = 100.0
 MAX_RETRIES = 5
 
@@ -98,7 +98,7 @@ class CanvasClient:
                 delay = min(delay * 2, 60)
                 continue
             if resp.status_code == 401 and self._is_bad_token(resp):
-                raise InvalidTokenError("El token de Canvas no es válido o expiró (401). Crea uno nuevo y corre `espol login`.", 401)
+                raise InvalidTokenError("El token de Canvas no es válido o expiró (401). Crea uno nuevo y corre `poli login`.", 401)
             if resp.status_code >= 400:
                 # 401/403/404 without a token problem: this student cannot see that
                 # resource (for example a course whose Files tab is hidden).

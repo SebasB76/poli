@@ -10,10 +10,10 @@ import json
 import logging
 from datetime import timedelta
 
-from espol_aula import timefmt
-from espol_aula.canvas import CanvasError, InvalidTokenError, ThrottledError
-from espol_aula.catalog import html_to_text
-from espol_aula.store import get_meta, set_meta
+from poli import timefmt
+from poli.canvas import CanvasError, InvalidTokenError, ThrottledError
+from poli.catalog import html_to_text
+from poli.store import get_meta, set_meta
 
 log = logging.getLogger(__name__)
 

@@ -35,10 +35,10 @@ from urllib.parse import unquote, urlencode, urljoin, urlsplit
 
 import requests
 
-from espol_aula import materials, timefmt
-from espol_aula.canvas import USER_AGENT, CanvasError
-from espol_aula.catalog import KIND_LABEL, LINK_ONLY, PUBLIC, WHY_LINK_ONLY, classify, download_url
-from espol_aula.config import CoreConfig, section
+from poli import materials, timefmt
+from poli.canvas import USER_AGENT, CanvasError
+from poli.catalog import KIND_LABEL, LINK_ONLY, PUBLIC, WHY_LINK_ONLY, classify, download_url
+from poli.config import CoreConfig, section
 
 log = logging.getLogger(__name__)
 

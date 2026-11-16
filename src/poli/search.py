@@ -15,8 +15,8 @@ import re
 import sqlite3
 from pathlib import Path
 
-from espol_aula import extract
-from espol_aula.catalog import assigned_files, fold, is_old, normalized_name, term_year
+from poli import extract
+from poli.catalog import assigned_files, fold, is_old, normalized_name, term_year
 
 STOPWORDS = set("""
 a al algo algun alguna algunas alguno algunos ante antes aqui asi aun cada como con contra cual cuales cuando

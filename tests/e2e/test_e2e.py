@@ -1,4 +1,4 @@
-"""The student's path through the installed `espol` command, against a local Canvas (fake_canvas.py):
+"""The student's path through the installed `poli` command, against a local Canvas (fake_canvas.py):
 
 1. `login` takes a hand-made token, verifies it and starts the renewal chain.
 2. `tareas`, `notas`, `archivos bajar` and `buscar` answer in JSON with English keys.
@@ -21,7 +21,7 @@ from pathlib import Path
 
 from fake_canvas import FakeCanvas
 
-CLI = str(Path(sys.executable).parent / "espol")
+CLI = str(Path(sys.executable).parent / "poli")
 T0 = datetime.fromisoformat("2026-09-28T06:30:00-05:00")
 MANUAL = "7~manual-e2e-token-xxxxxxxxxxxxxxxx"
 
@@ -35,11 +35,11 @@ class Student:
         self.home = tmp / "config"
         self.home.mkdir()
         (self.home / "config.toml").write_text(f'[canvas]\nurl = "{canvas.base}"\n', encoding="utf-8")
-        self.env = {**os.environ, "ESPOL_AULA_HOME": str(self.home), "ESPOL_AULA_DATA": str(tmp / "data")}
+        self.env = {**os.environ, "POLI_HOME": str(self.home), "POLI_DATA": str(tmp / "data")}
 
     def run(self, *args: str, minutes: int = 0, stdin: str = "", ok: bool = True) -> subprocess.CompletedProcess:
         done = subprocess.run([CLI, *args], input=stdin, capture_output=True, text=True, timeout=120,
-                              env={**self.env, "ESPOL_AULA_NOW": at(minutes)})
+                              env={**self.env, "POLI_NOW": at(minutes)})
         assert (done.returncode == 0) == ok, f"{args}: {done.returncode}\n{done.stdout}\n{done.stderr}"
         return done
 
@@ -89,7 +89,7 @@ def test_student_path(tmp_path):
         assert s.json("tareas", "--actualizar", minutes=95)
 
         mcp = subprocess.Popen([CLI, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               text=True, env={**s.env, "ESPOL_AULA_NOW": at(96)})
+                               text=True, env={**s.env, "POLI_NOW": at(96)})
         requests = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
                     {"jsonrpc": "2.0", "method": "notifications/initialized"},
                     {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
@@ -99,7 +99,7 @@ def test_student_path(tmp_path):
                      "params": {"name": "search_material", "arguments": {"query": "derivadas"}}}]
         out, err = mcp.communicate("\n".join(json.dumps(r) for r in requests) + "\n", timeout=120)
         replies = {r["id"]: r for r in map(json.loads, out.splitlines())}
-        assert replies[1]["result"]["serverInfo"]["name"] == "espol"
+        assert replies[1]["result"]["serverInfo"]["name"] == "poli"
         names = {t["name"] for t in replies[2]["result"]["tools"]}
         assert {"pending_assignments", "grades", "download_files", "search_material", "read_file"} <= names
         call = replies[3]["result"]
@@ -111,7 +111,7 @@ def test_student_path(tmp_path):
         assert s.json("renovar", minutes=200, ok=False)["chain_cut"]
         assert s.json("estado", minutes=200)["chain_cut"]
         stale = s.run("tareas", minutes=200)
-        assert "espol login" in stale.stderr, "the saved copy answers, and the student learns what to do"
+        assert "poli login" in stale.stderr, "the saved copy answers, and the student learns what to do"
 
         canvas.mint("7~second-manual-xxxxxxxxxxxxxxxx")
         s.run("login", "--stdin", "--sin-programar", minutes=210, stdin="7~second-manual-xxxxxxxxxxxxxxxx\n")

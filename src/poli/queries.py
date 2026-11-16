@@ -9,8 +9,8 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from espol_aula import extract, ocr, timefmt
-from espol_aula.catalog import (KIND_LABEL, PUBLIC, WHY_LINK_ONLY, assigned_files, fold, html_to_text, is_old,
+from poli import extract, ocr, timefmt
+from poli.catalog import (KIND_LABEL, PUBLIC, WHY_LINK_ONLY, assigned_files, fold, html_to_text, is_old,
                                 term_year)
 
 # A grade on something Canvas takes no upload for is the only sign from the aula that it is done.
@@ -61,7 +61,7 @@ def course_ids(conn: sqlite3.Connection, fragment: str | None) -> list[int] | No
     rows = conn.execute("SELECT id, name, course_code FROM courses WHERE active = 1").fetchall()
     ids = [r["id"] for r in rows if needle in fold(r["name"]) or needle in fold(r["course_code"])]
     if not ids:
-        raise NotFound(f"Ninguna materia coincide con «{fragment}». Prueba `espol cursos` para ver los nombres.")
+        raise NotFound(f"Ninguna materia coincide con «{fragment}». Prueba `poli cursos` para ver los nombres.")
     return ids
 
 
@@ -442,7 +442,7 @@ def file_by_id(conn: sqlite3.Connection, file_id: int) -> dict:
         (file_id,),
     ).fetchone()
     if row is None:
-        raise NotFound(f"No conozco el archivo {file_id}. Prueba `espol archivos`.")
+        raise NotFound(f"No conozco el archivo {file_id}. Prueba `poli archivos`.")
     return {**_file(row, assigned_files(conn)), "ocr": ocr_state(conn, row["digest"])}
 
 

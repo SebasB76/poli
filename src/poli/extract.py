@@ -141,7 +141,7 @@ def _doc(path: Path) -> list[tuple[int, str]]:
 
 
 def _html(path: Path) -> list[tuple[int, str]]:
-    from espol_aula.catalog import html_to_text
+    from poli.catalog import html_to_text
 
     text = html_to_text(path.read_text(encoding="utf-8", errors="replace"))
     sections, current = [], []

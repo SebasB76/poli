@@ -25,14 +25,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from espol_aula import catalog, extract, ocr, syllabus, timefmt
-from espol_aula.canvas import (
+from poli import catalog, extract, ocr, syllabus, timefmt
+from poli.canvas import (
     CanvasClient,
     CanvasError,
     InvalidTokenError,
     ThrottledError,
 )
-from espol_aula.config import CoreConfig
+from poli.config import CoreConfig
 
 log = logging.getLogger(__name__)
 

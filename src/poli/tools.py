@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import sys
 
-from espol_aula import Aula, __version__, queries, renewal, search
-from espol_aula.canvas import CanvasError
-from espol_aula.config import ConfigError, now_utc
-from espol_aula.mcp import Server, Tool, ToolError
+from poli import Aula, __version__, queries, renewal, search
+from poli.canvas import CanvasError
+from poli.config import ConfigError, now_utc
+from poli.mcp import Server, Tool, ToolError
 
 INSTRUCTIONS = """Read-only access to the user's ESPOL aula virtual (Canvas). Answer the student in Spanish unless they
 write in another language, and link each item's `url`. `course` filters accept any fragment of a course's name or
@@ -41,7 +41,7 @@ def build(aula: Aula) -> Server:
         return run
 
     def download(args: dict):
-        from espol_aula.cli import download as fetch
+        from poli.cli import download as fetch
         return fetch(aula, [int(i) for i in args["file_ids"]])
 
     def sync(args: dict):
@@ -109,14 +109,14 @@ def build(aula: Aula) -> Server:
     ]
     for tool in tools:
         tool.read_only = tool.name not in ("download_files", "sync")
-    return Server("espol", __version__, tools, INSTRUCTIONS, before_call=lambda: keep_alive(aula))
+    return Server("poli", __version__, tools, INSTRUCTIONS, before_call=lambda: keep_alive(aula))
 
 
 def keep_alive(aula: Aula) -> None:
     try:
         renewal.maintain(aula.cfg, now_utc(), wait=False)
     except (renewal.RenewalError, ConfigError) as exc:
-        print(f"espol: no pude renovar el token ({exc})", file=sys.stderr)
+        print(f"poli: no pude renovar el token ({exc})", file=sys.stderr)
 
 
 def serve() -> int:

@@ -10,7 +10,7 @@ snapshot and appends an `events` row for:
 The catalog is every document the aula shows, downloaded or not: the Files listing (with its
 folders), Modules (with the subheaders that split a week, «ANTES de clase…», and their outside
 links), and what Pages, the «Programa del curso», announcements (and their attachments) and
-assignments link to. Only metadata is read here; espol_aula.materials downloads. What the catalog
+assignments link to. Only metadata is read here; poli.materials downloads. What the catalog
 finds only by following a link (a linked file's metadata, a Page's body) costs extra reads, so
 background work gets a `budget` of them per sync and the rest waits for the next one; a course's
 first catalog read stays silent until it is complete, like every first read.
@@ -34,17 +34,17 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from espol_aula import extras, timefmt
-from espol_aula.canvas import (
+from poli import extras, timefmt
+from poli.canvas import (
     CanvasClient,
     CanvasError,
     InvalidTokenError,
     ThrottledError,
 )
-from espol_aula.catalog import Refs, classify, clean_title, html_to_text, mark_duplicates, refs, term_year
-from espol_aula.config import CoreConfig
-from espol_aula.queries import quiz_info
-from espol_aula.store import delete_meta, get_meta, set_meta
+from poli.catalog import Refs, classify, clean_title, html_to_text, mark_duplicates, refs, term_year
+from poli.config import CoreConfig
+from poli.queries import quiz_info
+from poli.store import delete_meta, get_meta, set_meta
 
 log = logging.getLogger(__name__)
 

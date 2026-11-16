@@ -1,10 +1,10 @@
 """Settings, the token file and the clock.
 
-Everything lives in the user's folders, so `uvx espol` works from anywhere:
-  ESPOL_AULA_HOME  config folder: config.toml (optional) and token.env (default ~/.config/espol)
-  ESPOL_AULA_DATA  data folder: the SQLite copy and downloaded material, over [storage] data_dir
-                   (default ~/.local/share/espol)
-  ESPOL_AULA_NOW   ISO-8601 timestamp with offset that replaces the current time (tests)
+Everything lives in the user's folders, so `uvx poli` works from anywhere:
+  POLI_HOME  config folder: config.toml (optional) and token.env (default ~/.config/poli)
+  POLI_DATA  data folder: the SQLite copy and downloaded material, over [storage] data_dir
+                   (default ~/.local/share/poli)
+  POLI_NOW   ISO-8601 timestamp with offset that replaces the current time (tests)
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ class CoreConfig:
 
 
 def home() -> Path:
-    return Path(os.environ.get("ESPOL_AULA_HOME") or _xdg("XDG_CONFIG_HOME", ".config") / "espol")
+    return Path(os.environ.get("POLI_HOME") or _xdg("XDG_CONFIG_HOME", ".config") / "poli")
 
 
 def config_path() -> Path:
@@ -96,8 +96,8 @@ def load_config(path: Path | None = None) -> CoreConfig:
         max_file_mb=float(material.get("max_file_mb", 200)),
         max_mb_per_sync=max(0.0, float(material.get("max_mb_per_sync", 50))),
         request_interval=max(0.0, float(canvas.get("request_interval_seconds", 0.5))),
-        data_dir=Path(os.path.expanduser(os.environ.get("ESPOL_AULA_DATA") or storage.get("data_dir")
-                                         or _xdg("XDG_DATA_HOME", ".local/share") / "espol")),
+        data_dir=Path(os.path.expanduser(os.environ.get("POLI_DATA") or storage.get("data_dir")
+                                         or _xdg("XDG_DATA_HOME", ".local/share") / "poli")),
         config_path=path,
         raw=raw,
     )
@@ -122,7 +122,7 @@ def load_secret_values(path: Path | None = None) -> dict[str, str]:
     try:
         return parse_env_file(path)
     except FileNotFoundError as exc:
-        raise ConfigError("Todavía no tienes un token guardado: corre `espol login`.") from exc
+        raise ConfigError("Todavía no tienes un token guardado: corre `poli login`.") from exc
 
 
 def update_secret_values(values: dict[str, str], *, remove: tuple[str, ...] = (),
@@ -177,15 +177,15 @@ def update_secret_values(values: dict[str, str], *, remove: tuple[str, ...] = ()
 def canvas_token(path: Path | None = None) -> str:
     token = load_secret_values(path).get("CANVAS_TOKEN", "")
     if not token:
-        raise ConfigError("Todavía no tienes un token guardado: corre `espol login`.")
+        raise ConfigError("Todavía no tienes un token guardado: corre `poli login`.")
     return token
 
 
 def now_utc() -> datetime:
-    override = os.environ.get("ESPOL_AULA_NOW")
+    override = os.environ.get("POLI_NOW")
     if override:
         value = datetime.fromisoformat(override)
         if value.tzinfo is None:
-            raise ConfigError("ESPOL_AULA_NOW debe incluir zona horaria")
+            raise ConfigError("POLI_NOW debe incluir zona horaria")
         return value.astimezone(timezone.utc)
     return datetime.now(timezone.utc)

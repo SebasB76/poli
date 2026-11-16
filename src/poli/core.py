@@ -19,13 +19,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from espol_aula import enlaces as _enlaces
-from espol_aula import materials as _materials
-from espol_aula import store as _store
-from espol_aula import sync as _sync
-from espol_aula import timefmt
-from espol_aula.canvas import CanvasClient, InvalidTokenError, ThrottledError
-from espol_aula.config import CoreConfig, canvas_token, load_config, now_utc
+from poli import enlaces as _enlaces
+from poli import materials as _materials
+from poli import store as _store
+from poli import sync as _sync
+from poli import timefmt
+from poli.canvas import CanvasClient, InvalidTokenError, ThrottledError
+from poli.config import CoreConfig, canvas_token, load_config, now_utc
 
 REFUSED_KEY = "canvas_token_refused"  # fingerprint of the token Canvas answered 401
 PAUSED_KEY = "canvas_paused_until"    # after Canvas kept throttling, no reads before this
@@ -77,7 +77,7 @@ class Aula:
         if not self.explicit:
             if self.refused_token():
                 raise InvalidTokenError("El token de Canvas no es válido o expiró (401); no lo vuelvo a usar hasta "
-                                        "que corras `espol login` con uno nuevo.", 401)
+                                        "que corras `poli login` con uno nuevo.", 401)
             paused = timefmt.parse(_store.get_meta(self.conn, PAUSED_KEY))
             if paused and self.now() < paused:
                 raise ThrottledError(f"el aula virtual pidió bajar el ritmo; la vuelvo a leer desde las "

@@ -1,15 +1,15 @@
-"""`espol`: your ESPOL aula virtual (Canvas) from the terminal, or as tools for any agent.
+"""`poli`: your ESPOL aula virtual (Canvas) from the terminal, or as tools for any agent.
 
-    espol login                    paste a Canvas token; it is kept alive from then on
-    espol estado                   the token, its renewal, and the last read of the aula
-    espol renovar [--instalar | --quitar]
-    espol logout
-    espol mcp                      MCP server over stdio (Claude Code, Codex, Cursor...)
-    espol skill                    print the Claude Code skill
+    poli login                    paste a Canvas token; it is kept alive from then on
+    poli estado                   the token, its renewal, and the last read of the aula
+    poli renovar [--instalar | --quitar]
+    poli logout
+    poli mcp                      MCP server over stdio (Claude Code, Codex, Cursor...)
+    poli skill                    print the Claude Code skill
 
-    espol cursos | tareas | anuncios | notas | personas | mensajes | calendario | foros
-    espol archivos [listar | bajar <id>... | leer <id> --paginas 3-5]
-    espol enlaces | buscar "pregunta" | sincronizar [--material] | ocr
+    poli cursos | tareas | anuncios | notas | personas | mensajes | calendario | foros
+    poli archivos [listar | bajar <id>... | leer <id> --paginas 3-5]
+    poli enlaces | buscar "pregunta" | sincronizar [--material] | ocr
 
 Human-readable Spanish by default; `--json` for agents. Reads only: the one write is the renewal
 of the student's own token.
@@ -24,10 +24,10 @@ import logging
 import sys
 from importlib import resources
 
-from espol_aula import Aula, materials, ocr, queries, renewal, schedule, search, timefmt
-from espol_aula.canvas import CanvasError
-from espol_aula.config import ConfigError, load_config, now_utc, secrets_path
-from espol_aula.store import connect
+from poli import Aula, materials, ocr, queries, renewal, schedule, search, timefmt
+from poli.canvas import CanvasError
+from poli.config import ConfigError, load_config, now_utc, secrets_path
+from poli.store import connect
 
 
 class UsageError(Exception):
@@ -46,7 +46,7 @@ def _common() -> argparse.ArgumentParser:
 
 def build_parser() -> argparse.ArgumentParser:
     common = _common()
-    parser = argparse.ArgumentParser(prog="espol", parents=[common],
+    parser = argparse.ArgumentParser(prog="poli", parents=[common],
                                      description="Tu aula virtual de ESPOL desde la terminal o desde tu agente.")
     sub = parser.add_subparsers(dest="cmd", required=True, metavar="comando")
 
@@ -92,7 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("archivos", parents=[common], help="catálogo del material: listar, bajar, leer")
     p.add_argument("action", nargs="?", choices=["listar", "bajar", "leer"], default="listar")
-    p.add_argument("ids", nargs="*", type=int, help="ID de archivo (de `espol archivos`)")
+    p.add_argument("ids", nargs="*", type=int, help="ID de archivo (de `poli archivos`)")
     p.add_argument("--curso", dest="course")
     p.add_argument("--nombre", dest="name", help="parte del nombre, módulo, sección o carpeta (ej. 'semana 3')")
     p.add_argument("--paginas", dest="pages", help="para leer: rango de páginas, ej. 3-5")
@@ -279,7 +279,7 @@ def render_downloads(rows) -> str:
 def render_read(data) -> str:
     lines = [f"{data['file']} — {data['course']}", data["url"], ""]
     if not data["content"]:
-        lines.append("(sin texto indexado; bájalo primero con `espol archivos bajar "
+        lines.append("(sin texto indexado; bájalo primero con `poli archivos bajar "
                      f"{data['id']}`)")
     for page in data["content"]:
         lines.append(f"--- {data['unit']} {page['page']} ---")
@@ -320,16 +320,16 @@ def render_ocr(data) -> str:
 def render_status(data) -> str:
     lines = []
     if not data["token_saved"]:
-        return "No tienes un token guardado. Corre `espol login`."
+        return "No tienes un token guardado. Corre `poli login`."
     if data["chain_cut"]:
-        lines.append("❌ El aula rechazó tu token: la cadena se cortó. Crea uno nuevo y corre `espol login`.")
+        lines.append("❌ El aula rechazó tu token: la cadena se cortó. Crea uno nuevo y corre `poli login`.")
     elif data["server_fixed"]:
         lines.append("✓ Token guardado. El aula ya no vence los tokens a la hora: no hace falta renovarlo.")
     elif data["renewed_at"]:
         lines.append(f"✓ Token renovado {timefmt.human(data['renewed_at'], data['tz'])}; se renueva a los 40 minutos.")
     else:
-        lines.append("⚠ Token guardado, pero todavía no se ha renovado nunca: corre `espol renovar`.")
-    lines.append(f"Renovación automática: {data['schedule'] or 'no instalada (`espol renovar --instalar`)'}")
+        lines.append("⚠ Token guardado, pero todavía no se ha renovado nunca: corre `poli renovar`.")
+    lines.append(f"Renovación automática: {data['schedule'] or 'no instalada (`poli renovar --instalar`)'}")
     lines.append(f"Última lectura del aula: {timefmt.human(data['last_sync'], data['tz']) if data['last_sync'] else 'nunca'}")
     return "\n".join(lines)
 
@@ -338,7 +338,7 @@ def render_renewal(result: renewal.RenewalResult | None) -> str:
     if result is None:
         return "Otra renovación está corriendo ahora mismo."
     if result.chain_cut:
-        return "❌ El aula rechazó tu token: la cadena se cortó. Crea uno nuevo y corre `espol login`."
+        return "❌ El aula rechazó tu token: la cadena se cortó. Crea uno nuevo y corre `poli login`."
     if result.server_fixed:
         return "✓ El aula ya no vence los tokens a la hora; la renovación se apagó sola."
     if result.renewal_error:
@@ -494,14 +494,14 @@ def run(args, aula: Aula) -> int:
             _out(queries.files(conn, ids, args.name), as_json, lambda r: render_files(r, aula.cfg.max_file_mb))
         elif args.action == "leer":
             if len(args.ids) != 1:
-                raise UsageError("Uso: espol archivos leer <id> [--paginas 3-5]")
+                raise UsageError("Uso: poli archivos leer <id> [--paginas 3-5]")
             first, last = _parse_range(args.pages)
             _out(queries.read_pages(conn, args.ids[0], first, last), as_json, render_read)
         else:
             targets = [{"id": i} for i in args.ids] if args.ids else (
                 queries.files(conn, ids, args.name) if (args.course or args.name) else [])
             if not targets:
-                raise UsageError("Uso: espol archivos bajar <id>...  o  espol archivos bajar --curso X --nombre Y")
+                raise UsageError("Uso: poli archivos bajar <id>...  o  poli archivos bajar --curso X --nombre Y")
             results = download(aula, [f["id"] for f in targets])
             _out(results, as_json, render_downloads)
             return 0 if all(r.get("local_path") for r in results) else 1
@@ -529,10 +529,10 @@ def main(argv: list[str] | None = None) -> int:
     # a retry or a hidden course is not the student's business; the MCP server keeps them on stderr
     logging.basicConfig(level=logging.WARNING if args.cmd == "mcp" else logging.ERROR, format="%(message)s")
     if args.cmd == "mcp":
-        from espol_aula import tools
+        from poli import tools
         return tools.serve()
     if args.cmd == "skill":
-        sys.stdout.write(resources.files("espol_aula").joinpath("SKILL.md").read_text(encoding="utf-8"))
+        sys.stdout.write(resources.files("poli").joinpath("SKILL.md").read_text(encoding="utf-8"))
         return 0
     aula = None
     try:

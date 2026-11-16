@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from espol_aula.catalog import fold
+from poli.catalog import fold
 
 SYLLABUS_NAME = re.compile(r"s[iy]labo|syl+abus|contenido\s+de\s+(la\s+)?asignatura|programa\s+anal[iy]tico"
                            r"|programa\s+de\s+(la\s+)?asignatura|^contenido\.(pdf|docx)$")

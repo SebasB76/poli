@@ -61,7 +61,7 @@ def install() -> str:
                 f"[Service]\nType=oneshot\nExecStart={' '.join(command)}\n", encoding="utf-8")
             (folder / f"{NAME}.timer").write_text(
                 f"[Unit]\nDescription=Renueva el token de Canvas de poli cada 10 minutos\n\n"
-                f"[Timer]\nOnBootSec=1min\nOnUnitActiveSec={EVERY_SECONDS}s\n\n"
+                f"[Timer]\nOnActiveSec=1min\nOnBootSec=1min\nOnUnitActiveSec={EVERY_SECONDS}s\n\n"
                 f"[Install]\nWantedBy=timers.target\n", encoding="utf-8")
             _run("systemctl", "--user", "daemon-reload")
             _run("systemctl", "--user", "enable", "--now", f"{NAME}.timer")
